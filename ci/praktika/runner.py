@@ -281,6 +281,13 @@ class Runner:
             _GH_Auth(workflow=workflow)
 
         if job.run_in_docker and not no_docker:
+            # TODO: setup on runners instead
+            if env.INSTANCE_ID:
+                Shell.check(
+                    f"aws ec2 modify-instance-metadata-options --instance-id {env.INSTANCE_ID} --http-put-response-hop-limit 2 --http-endpoint enabled",
+                    verbose=True,
+                )
+
             job.run_in_docker, docker_settings = (
                 job.run_in_docker.split("+")[0],
                 job.run_in_docker.split("+")[1:],

@@ -27,7 +27,6 @@ class JobStages(metaclass=MetaClasses.WithIter):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="ClickHouse Build Job")
-    parser.add_argument("--ch-path", help="Path to clickhouse binary", default=temp_dir)
     parser.add_argument(
         "--options",
         help="Comma separated option(s): parallel|non-parallel|BATCH_NUM/BTATCH_TOT|..",
@@ -40,6 +39,12 @@ def parse_args():
         default=[],
         nargs="+",
         action="extend",
+    )
+    parser.add_argument(
+        "--path",
+        help="Optional. Path to custom clickhouse binary",
+        type=str,
+        default="",
     )
     return parser.parse_args()
 
@@ -89,7 +94,7 @@ def run_tests(
     command = f"clickhouse-test --testname --check-zookeeper-session --hung-check --trace \
                 --capture-client-stacktrace --queries ./tests/queries --test-runs 1 \
                 {extra_args} \
-                --queries ./tests/queries -- '{test}' | ts '%Y-%m-%d %H:%M:%S' \
+                --queries ./tests/queries -- '{' '.join(test)}' | ts '%Y-%m-%d %H:%M:%S' \
                 | tee -a \"{test_output_file}\""
     if Path(test_output_file).exists():
         Path(test_output_file).unlink()
@@ -214,7 +219,25 @@ def main():
         config_installs_args += " --encrypted-storage"
         runner_options += f" --encrypted-storage"
 
-    ch_path = args.ch_path
+    if args.path:
+        assert Path(args.path).is_dir(), f"Path [{args.path}] is not a directory"
+        ch_path = str(Path(args.path).absolute())
+    else:
+        paths_to_check = [
+            f"{temp_dir}/clickhouse",  # it's set for CI runs, but we need to check it
+            f"{Utils.cwd()}/build/programs/clickhouse",
+            f"{Utils.cwd()}/clickhouse",
+        ]
+        for path in paths_to_check:
+            if Path(path).is_file():
+                ch_path = str(Path(path).parent.absolute())
+                break
+        else:
+            raise FileNotFoundError(
+                "Clickhouse binary not found in any of the paths: "
+                + ", ".join(paths_to_check)
+                + ". You can also specify path to binary via --path argument"
+            )
 
     stop_watch = Utils.Stopwatch()
 
@@ -226,8 +249,10 @@ def main():
     if not is_bugfix_validation and not info.is_local_run:
         stages.remove(JobStages.CHECK_ERRORS)
     if info.is_local_run:
-        stages.remove(JobStages.COLLECT_LOGS)
-        stages.remove(JobStages.COLLECT_COVERAGE)
+        if JobStages.COLLECT_LOGS in stages:
+            stages.remove(JobStages.COLLECT_LOGS)
+        if JobStages.COLLECT_COVERAGE in stages:
+            stages.remove(JobStages.COLLECT_COVERAGE)
 
     tests = args.test or []
     if is_flaky_check or is_bugfix_validation:
@@ -449,8 +474,13 @@ def main():
         if test_result and CH.extra_tests_results:
             test_result.extend_sub_results(CH.extra_tests_results)
 
-    if test_result and JobStages.COLLECT_COVERAGE in stages:
+    if (
+        test_result
+        and not test_result.is_error()
+        and JobStages.COLLECT_COVERAGE in stages
+    ):
         print("Collect coverage")
+        os.environ["AWS_DEFAULT_REGION"] = "us-east-1"
         results.append(
             Result.from_commands_run(
                 name="Collect coverage",
