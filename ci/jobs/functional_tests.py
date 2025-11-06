@@ -5,7 +5,9 @@ import re
 import time
 from pathlib import Path
 
+from ci.jobs.scripts.cidb_cluster import CIDBCluster
 from ci.jobs.scripts.clickhouse_proc import ClickHouseProc
+from ci.jobs.scripts.functional_tests.export_coverage import CoverageExporter
 from ci.jobs.scripts.functional_tests_results import FTResultsProcessor
 from ci.praktika.info import Info
 from ci.praktika.result import Result
@@ -20,6 +22,7 @@ class JobStages(metaclass=MetaClasses.WithIter):
     TEST = "test"
     CHECK_ERRORS = "check_errors"
     COLLECT_LOGS = "collect_logs"
+    COLLECT_COVERAGE = "collect_coverage"
 
 
 def parse_args():
@@ -31,7 +34,13 @@ def parse_args():
         default="",
     )
     parser.add_argument("--param", help="Optional job start stage", default=None)
-    parser.add_argument("--test", help="Optional test name pattern", default="")
+    parser.add_argument(
+        "--test",
+        help="Optional. Test name patterns (space-separated)",
+        default=[],
+        nargs="+",
+        action="extend",
+    )
     return parser.parse_args()
 
 
@@ -72,8 +81,6 @@ def run_tests(
         extra_args += (
             f" --run-by-hash-total {batch_total} --run-by-hash-num {batch_num-1}"
         )
-    else:
-        extra_args += " --report-coverage"
     if "--no-shard" not in extra_args:
         extra_args += " --shard"
     if "--no-zookeeper" not in extra_args:
@@ -137,6 +144,7 @@ def main():
     is_shared_catalog = False
     is_encrypted_storage = random.choice([True, False])
     is_parallel_replicas = False
+    is_coverage = False
     runner_options = ""
     # optimal value for most of the jobs
     nproc = int(Utils.cpu_count() * 0.6)
@@ -149,7 +157,8 @@ def main():
             print(f"NOTE: Enabled config option [{OPTIONS_TO_INSTALL_ARGUMENTS[to]}]")
             config_installs_args += f" {OPTIONS_TO_INSTALL_ARGUMENTS[to]}"
         elif to.startswith("amd_") or to.startswith("arm_") or "flaky" in to:
-            pass
+            if "coverage" in to:
+                is_coverage = True
         elif to in OPTIONS_TO_TEST_RUNNER_ARGUMENTS:
             print(
                 f"NOTE: Enabled test runner option [{OPTIONS_TO_TEST_RUNNER_ARGUMENTS[to]}]"
@@ -184,6 +193,8 @@ def main():
             nproc = int(Utils.cpu_count() * 1.2)
         elif is_database_replicated:
             nproc = int(Utils.cpu_count() * 0.4)
+        elif is_coverage:
+            nproc = 1
         else:
             pass
 
@@ -208,14 +219,22 @@ def main():
     stop_watch = Utils.Stopwatch()
 
     stages = list(JobStages)
+    if not is_coverage:
+        stages.remove(JobStages.COLLECT_COVERAGE)
+    else:
+        stages.remove(JobStages.COLLECT_LOGS)
+    if not is_bugfix_validation and not info.is_local_run:
+        stages.remove(JobStages.CHECK_ERRORS)
+    if info.is_local_run:
+        stages.remove(JobStages.COLLECT_LOGS)
+        stages.remove(JobStages.COLLECT_COVERAGE)
 
-    tests = []
+    tests = args.test or []
     if is_flaky_check or is_bugfix_validation:
         if info.is_local_run:
             assert (
                 args.test
             ), "For running flaky or bugfix_validation check locally, test case name must be provided via --test"
-            tests = [args.test]
         else:
             tests = get_changed_tests(info)
         if tests:
@@ -298,7 +317,8 @@ def main():
             f"prof_active:true,prof_prefix:{temp_dir}/jemalloc_profiles/clickhouse.jemalloc"
         )
 
-        commands.append(configure_log_export)
+        if not is_coverage:
+            commands.append(configure_log_export)
 
         results.append(
             Result.from_commands_run(name="Install ClickHouse", command=commands)
@@ -355,7 +375,7 @@ def main():
         stop_watch_ = Utils.Stopwatch()
         step_name = "Tests"
         print(step_name)
-        if not is_flaky_check and not is_bugfix_validation:
+        if not tests:
             run_tests(
                 batch_num=batch_num,
                 batch_total=total_batches,
@@ -396,7 +416,7 @@ def main():
 
     CH.terminate()
 
-    if test_result and JobStages.CHECK_ERRORS in stages and not is_bugfix_validation:
+    if test_result and JobStages.CHECK_ERRORS in stages:
         # must not be performed for a test validation - test must fail and log errors are not respected
         print("Check fatal errors")
         sw_ = Utils.Stopwatch()
@@ -429,6 +449,20 @@ def main():
         if test_result and CH.extra_tests_results:
             test_result.extend_sub_results(CH.extra_tests_results)
 
+    if test_result and JobStages.COLLECT_COVERAGE in stages:
+        print("Collect coverage")
+        results.append(
+            Result.from_commands_run(
+                name="Collect coverage",
+                command=lambda: CoverageExporter(
+                    src=CH,
+                    dest=CIDBCluster(),
+                    job_name=info.job_name,
+                ).do(),
+            )
+        )
+
+    # check if ci pipeline must be blocked on test failures
     force_ok_exit = False
     if "parallel" in test_options and test_result:
         failures_cnt = len([r for r in test_result.results if not r.is_ok()])

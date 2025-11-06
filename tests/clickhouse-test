@@ -2019,7 +2019,7 @@ class TestCase:
             try:
                 clickhouse_execute(
                     args,
-                    f"INSERT INTO system.coverage_log SELECT now(), '{self.case}', coverageCurrent()",
+                    f"INSERT INTO system.coverage_log SELECT DISTINCT now(), '{self.case}', arrayFilter(x -> x != 0, coverageCurrent()), arrayFilter(s -> s != '', arrayMap(x -> demangle(addressToSymbol(x)), coverageCurrent()))",
                     retry_error_codes=True,
                 )
             except Exception as e:
@@ -2037,7 +2037,7 @@ class TestCase:
                             args,
                             "INSERT INTO system.coverage_log "
                             "SETTINGS async_insert=1, wait_for_async_insert=0, async_insert_busy_timeout_min_ms=200, async_insert_busy_timeout_max_ms=1000 "
-                            f"SELECT now(), '{self.case}', groupArray(data) FROM input('data UInt64') FORMAT RowBinary",
+                            f"SELECT now(), '{self.case}', groupArray(data), arrayMap(x -> demangle(addressToSymbol(x)), groupArray(data)) FROM input('data UInt64') FORMAT RowBinary",
                             body=body,
                             retry_error_codes=True,
                         )
@@ -3609,7 +3609,8 @@ def main(args):
                 (
                     time DateTime,
                     test_name String,
-                    coverage Array(UInt64)
+                    coverage Array(UInt64),
+                    symbol Array(String)
                 ) ENGINE = MergeTree ORDER BY test_name
                 COMMENT 'Contains information about per-test coverage from the CI, but used only for exporting to the CI cluster';
             """,
@@ -3618,7 +3619,7 @@ def main(args):
         # Coverage collected at the system startup before running any tests:
         clickhouse_execute(
             args,
-            "INSERT INTO system.coverage_log SELECT now(), '', coverageCurrent()",
+            "INSERT INTO system.coverage_log SELECT DISTINCT now(), '', arrayFilter(x -> x != 0, coverageCurrent()), arrayFilter(s -> s != '', arrayMap(x -> demangle(addressToSymbol(x)), coverageCurrent()))",
         )
 
     total_tests_run = 0
