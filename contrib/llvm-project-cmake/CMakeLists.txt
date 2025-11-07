@@ -154,7 +154,7 @@ block()
     # Replacing space separators with semicolons does not help here,
     # so let's just get rid of prlimit with its arguments altogether, we don't need it here anyway.
     if (ENABLE_CHECK_HEAVY_BUILDS)
-        set (CMAKE_CXX_COMPILER_LAUNCHER ${BARE_CMAKE_CXX_COMPILER_LAUNCHER})
+        set (CMAKE_CXX_COMPILER_LAUNCHER ${ORIGINAL_CMAKE_CXX_COMPILER_LAUNCHER})
     endif()
 
     add_subdirectory ("${LLVM_SOURCE_DIR}" "${LLVM_BINARY_DIR}")
