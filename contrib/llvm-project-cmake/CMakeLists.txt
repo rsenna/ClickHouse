@@ -147,18 +147,7 @@ endif()
 # may not exist and compilation fails. This happens with musl.
 add_compile_definitions("_LARGEFILE64_SOURCE")
 
-block()
-    # llvm-project/llvm/cmake/modules/CrossCompile.cmake passes CMAKE_C[XX]_COMPILER_LAUNCHER
-    # to another CMake generator, but expects a value without spaces.
-    #
-    # Replacing space separators with semicolons does not help here,
-    # so let's just get rid of prlimit with its arguments altogether, we don't need it here anyway.
-    if (ENABLE_CHECK_HEAVY_BUILDS)
-        set (CMAKE_CXX_COMPILER_LAUNCHER ${ORIGINAL_CMAKE_CXX_COMPILER_LAUNCHER})
-    endif()
-
-    add_subdirectory ("${LLVM_SOURCE_DIR}" "${LLVM_BINARY_DIR}")
-endblock()
+add_subdirectory ("${LLVM_SOURCE_DIR}" "${LLVM_BINARY_DIR}")
 
 set_directory_properties (PROPERTIES
    # due to llvm crosscompile cmake does not know how to clean it, and on clean
