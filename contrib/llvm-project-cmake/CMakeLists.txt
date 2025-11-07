@@ -150,11 +150,12 @@ add_compile_definitions("_LARGEFILE64_SOURCE")
 block()
     # llvm-project/llvm/cmake/modules/CrossCompile.cmake passes CMAKE_C[XX]_COMPILER_LAUNCHER
     # to another CMake generator, but expects a value without spaces.
-    # We may replace spaces with semicolons to ensure it is unwrapped correctly later.
-    if (CMAKE_CXX_COMPILER_LAUNCHER)
-        string(REPLACE " " ";" LLVM_CMAKE_CXX_COMPILER_LAUNCHER "${CMAKE_CXX_COMPILER_LAUNCHER}")
+    #
+    # Replacing space separators with semicolons does not help here,
+    # so let's just get rid of prlimit with its arguments altogether, we don't need it here anyway.
+    if (ENABLE_CHECK_HEAVY_BUILDS)
+        set (CMAKE_CXX_COMPILER_LAUNCHER ${BARE_CMAKE_CXX_COMPILER_LAUNCHER})
     endif()
-    set (CMAKE_CXX_COMPILER_LAUNCHER "${LLVM_CMAKE_CXX_COMPILER_LAUNCHER}")
 
     add_subdirectory ("${LLVM_SOURCE_DIR}" "${LLVM_BINARY_DIR}")
 endblock()
